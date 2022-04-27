@@ -1,10 +1,22 @@
 const express =require("express");
+const sql_client = require('mysql')
+require("dotenv").config();
 const axios = require('axios')
 var bodyParser = require('body-parser');
 const jwt=require("jsonwebtoken")
-require("dotenv").config();
 const app=express()
+//const actions=require('./controllers/userController')
+
 app.use(bodyParser.json());
+const client = sql_client.createConnection({
+    database: 'imagenes',
+    host: "35.223.76.112",
+    port: 3306,
+    user: "ricardo",
+    password: "ricricric" //abcd1234
+})
+client.connect(err => console.log(err || `> Connection stablished`))
+const api=process.env.CLOUD_FUNCTION
 //version
 app.get("/version", (req,res)=>{
     res.json({version:"version 1"})
@@ -18,7 +30,7 @@ app.post("/insertData", (req,res)=>{
         } else {
             try {
                 axios
-                .post('https://us-central1-final-348322.cloudfunctions.net/finalproject/newEntry', req.body)
+                .post(api+'/newEntry', req.body)
                 .then(data => {
                     res.json(data)
                 })
@@ -30,45 +42,59 @@ app.post("/insertData", (req,res)=>{
     })
 });
 //Registrarse
-app.post("/signup", (req,res)=>{    
+app.post("/signup", (req, res) => {
     try {
-        axios
-        .post('https://us-central1-final-348322.cloudfunctions.net/finalproject/newEntry', req.body)
-        .then(datos => {
-            jwt.sign({data}, "secretKey",{expiresIn:"12d"},(err, token)=>{
+        const n = req.body.names.join(', ')
+        const v = req.body.values.map(v => `'${v}'`).join(', ')
+        const sql = `INSERT INTO ${req.body.table} (${n}) VALUES (${v})`
+        console.log(`> Executing ${sql}`)
+        client.query(sql, req.body.values, (err, r) => {
+            if (err){
+                console.log(`! Error inserting to table ${req.body.table}`)
+                console.log(err)
+                return {status:false}
+            }
+           jwt.sign({id:r.insertId}, "secretKey",{expiresIn:"12d"}, (err, token)=>{
                 res.json({
-                    token,
-                    datos
+                    token:  token,
+                    id:r.insertId,
+                    status:1
                 })
+                console.log(token,r.insertId)
             })
         })
-        .catch((error)=>res.json({message:error}))   
     } catch (error) {
-        res.json({message:error})
-    }    
+        console.log(error)
+        res.json({status:3})
+    }  
 });
 //login
 app.post("/signin", (req,res)=>{
     try {
         axios
-        .post('https://us-central1-final-348322.cloudfunctions.net/finalproject/getData', req.body)
-        .then(data => {
-            if (String(data.pass)===String(info.pass)) {
-                jwt.sign({data}, "secretKey",{expiresIn:"12d"},(err, token)=>{
+        .post(api+'/getData', {
+            table:"user",
+            id:req.body.username,
+            tableid:"username"
+            })
+        .then(result => {
+            console.log(result.data)
+            if (String(result.data[0].password)===String(req.body.pass)) {
+                jwt.sign({result:result.data}, "secretKey",{expiresIn:"12d"},(err, token)=>{
                     res.json({
                         token,
-                        data
+                        info:result.data,
+                        status:1
                     })
                 })
-                console.log(data.pass)   
             } else {
-                res.status(400)
-                res.json({message:"don't match info"})    
+                res.status(400).json({message:"don't match info", status:2})    
             } 
         })
-        .catch((error)=>res.json({message:error}))   
+        .catch((error)=>{res.status(400).json({message:error}); console.log(error)})   
     } catch (error) {
-        res.json({message:error})
+        res.status(400).json({Error:error, status:3})
+        console.log(error)
     }    
 });
 //obtenerTodos ya sea img o album, user
@@ -80,7 +106,7 @@ app.get("/allData", verifyToken, async (req,res)=>{
         } else {   
             try {
                 axios
-                .post('https://us-central1-final-348322.cloudfunctions.net/finalproject/getData', req.body)
+                .post(api+'/getData', req.body)
                 .then(data => {
                     res.json(data)
                 })
@@ -100,7 +126,7 @@ app.put("/update", verifyToken, (req,res)=>{
         } else {
             try {
                 axios
-                .post('https://us-central1-final-348322.cloudfunctions.net/finalproject/updateData', req.body)
+                .post(api+'/updateData', req.body)
                 .then(data => {
                     res.json(data)
                 })
@@ -120,7 +146,7 @@ app.delete("/dataDelete", verifyToken, (req,res)=>{
         } else {            
             try {
                 axios
-                .post('https://us-central1-final-348322.cloudfunctions.net/finalproject/deleteData', req.body)
+                .post(api+'/deleteData', req.body)
                 .then(data => {
                     res.json(data)
                 })
@@ -140,7 +166,7 @@ app.delete("/dataAlbum", verifyToken, (req,res)=>{
         } else {            
             try {
                 axios
-                .post('https://us-central1-final-348322.cloudfunctions.net/finalproject/deleteAlbum', req.body)
+                .post(api+'/deleteAlbum', req.body)
                 .then(data => {
                     res.json(data)
                 })
@@ -150,6 +176,23 @@ app.delete("/dataAlbum", verifyToken, (req,res)=>{
             }            
         }
     })
+});
+//especial
+app.post("/especial", verifyToken, (req,res)=>{
+    try {
+        console.log(req.body)
+        axios
+        .post(api+'/especial', {
+            consul:req.body.consulta
+            })
+        .then(result => {
+            res.json({result})
+        })
+        .catch((error)=>{res.status(400).json({message:error}); console.log(error)})   
+    } catch (error) {
+        res.status(400).json({message:error})
+        console.log(error)
+    }   
 });
 function verifyToken(req, res, next){
 const bearerHeader=req.headers['authorization'];
